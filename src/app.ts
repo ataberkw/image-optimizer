@@ -43,6 +43,7 @@ app.post("/oc", async (req: Request, res: Response) => {
     try {
         const podcastName = req.body['podcastRSS'] as string;
         const podcastUuid = uuidv5(podcastName, uuidNIL);
+        const trim = req.body['trim'] == true;
         if (podcastName == null) throw Error('podcastRSS is null');
         const imageUrls = req.body['images'] as any[];
         if (imageUrls == null) throw Error('imagrURls is null');
@@ -51,12 +52,12 @@ app.post("/oc", async (req: Request, res: Response) => {
         const isExistPromises: Promise<any>[] = [];
         for (let a = 0; a < imageUrls.length; a++) {
             //TODO check 600 too?
-            isExistPromises.push(getUrlIfDoesNotExist(300, imageUrls[a], podcastUuid));
+            isExistPromises.push(getUrlIfDoesNotExist(300, imageUrls[a], podcastUuid, trim));
         }
         await Promise.all(isExistPromises.map(p => p.then(e => missingImageUrls.push(e), err => err)));
         console.log(missingImageUrls);
 
-        await postImages(podcastUuid, missingImageUrls);
+        await postImages(podcastUuid, missingImageUrls, trim);
         res.json({
             status: 200,
         });
@@ -70,8 +71,8 @@ app.post("/oc", async (req: Request, res: Response) => {
     }
 });
 
-async function getUrlIfDoesNotExist(size: number, imageUrl: string, podcastUuid: string): Promise<string> {
-    const imageUrlUuid = uuidv5(imageUrl, uuidNIL);
+async function getUrlIfDoesNotExist(size: number, imageUrl: string, podcastUuid: string, trim: boolean): Promise<string> {
+    const imageUrlUuid = uuidv5(trim ? imageUrl.split('?')[0] : imageUrl, uuidNIL);
     const request = getHeadObjectRequest(size, imageUrlUuid, podcastUuid);
     return new Promise(async (resolve, reject) => {
         try {
@@ -84,14 +85,13 @@ async function getUrlIfDoesNotExist(size: number, imageUrl: string, podcastUuid:
     });
 }
 
-async function postImages(podcasUuid: string, urls: string[]) {
+async function postImages(podcasUuid: string, urls: string[], trim: boolean) {
     try {
-
         const urlPromises: Promise<any>[] = [];
         for (let a = 0; a < urls.length; a++) {
-            urlPromises.push(getUrlPromise(podcasUuid, urls[a]));
+            urlPromises.push(getUrlPromise(podcasUuid, urls[a], trim));
         }
-        await Promise.all(urlPromises.map(e => e.catch(c => console.error('Couldn\'t upload or download ' + c))));
+        await Promise.all(urlPromises.map(e => e.catch(c => console.error('Couldn\'t upload or download  ' + c))));
         console.log('AALLL DONE!');
     } catch (error) {
         console.log('ERR CAUTGHT');
@@ -101,18 +101,26 @@ async function postImages(podcasUuid: string, urls: string[]) {
 
 }
 
-
-async function getUrlPromise(podcastUUID: string, url: string): Promise<any> {
+async function getUrlPromise(podcastUUID: string, url: string, trim: boolean): Promise<any> {
     return new Promise(async (resolve, reject) => {
         try {
-            const imageUrlUuid = uuidv5(url, uuidNIL);
+            const imageUrlUuid = uuidv5(trim ? url.split('?')[0] : url, uuidNIL);
             const fimg = await fetch(url)
             const downloadedImage = Buffer.from(await fimg.arrayBuffer())
-
+            const kilobytes = (downloadedImage.byteLength / 1024);
+            let quality;
+            if (kilobytes > 2000)
+                quality = 60
+            else if (kilobytes > 700)
+                quality = 70
+            else if (kilobytes > 400)
+                quality = 75
+            else
+                quality = 80
             const resized600 = await sharp(downloadedImage)
-                .jpeg({ quality: 65 }).resize(600, 600)
+                .jpeg({ quality }).resize(600, 600)
                 .toBuffer();
-            const resized300 = await sharp(downloadedImage).jpeg({ quality: 65 }).resize(300, 300)
+            const resized300 = await sharp(downloadedImage).jpeg({ quality }).resize(300, 300)
                 .toBuffer();
             const promises: Promise<any>[] = [
                 getSingleFileUploadPromise(getPutObjectRequest(resized300, 300, imageUrlUuid, podcastUUID)),
@@ -126,6 +134,8 @@ async function getUrlPromise(podcastUUID: string, url: string): Promise<any> {
     });
 }
 function getSingleFileUploadPromise(params: AWS.S3.PutObjectRequest): Promise<AWS.S3.ManagedUpload.SendData> {
+    console.log('UPLAODED https://podcasterapp-covers.s3.eu-central-1.amazonaws.com/' + params.Key);
+
     return s3bucket.upload(params).promise();
 };
 
