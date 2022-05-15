@@ -117,10 +117,11 @@ async function getUrlPromise(podcastUUID: string, url: string, trim: boolean): P
                 quality = 75
             else
                 quality = 80
+                
             const resized600 = await sharp(downloadedImage)
                 .jpeg({ quality }).resize(600, 600)
                 .toBuffer();
-            const resized300 = await sharp(downloadedImage).jpeg({ quality }).resize(300, 300)
+            const resized300 = await sharp(downloadedImage).resize(300, 300)
                 .toBuffer();
             const promises: Promise<any>[] = [
                 getSingleFileUploadPromise(getPutObjectRequest(resized300, 300, imageUrlUuid, podcastUUID)),
