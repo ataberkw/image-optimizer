@@ -69,6 +69,7 @@ app.post("/up", upload.single('file'), async (req: Request, res: Response) => {
 
 app.post("/oc", async (req: Request, res: Response) => {
     try {
+
         const podcastName = req.body['podcastRSS'] as string;
         const podcastUuid = uuidv5(podcastName, uuidNIL);
         const trim = req.body['trim'] == true;
@@ -98,6 +99,42 @@ app.post("/oc", async (req: Request, res: Response) => {
         });
     }
 });
+
+app.post("/oc/multi", async (req: Request, res: Response) => {
+    try {
+        const podcastName = req.body['podcastRSS'] as string;
+        const podcastUuid = uuidv5(podcastName, uuidNIL);
+        const trim = req.body['trim'] == true;
+        if (podcastName == null) throw Error('podcastRSS is null');
+        const imageUrls = req.body['images'] as any[];
+        if (imageUrls == null) throw Error('imagrURls is null');
+
+        const missingImageUrls = [];
+        const isExistPromises: Promise<any>[] = [];
+        for (let a = 0; a < imageUrls.length; a++) {
+            //TODO check 600 too?
+            isExistPromises.push(getUrlIfDoesNotExist(300, imageUrls[a], podcastUuid, trim));
+        }
+        await Promise.all(isExistPromises.map(p => p.then(e => missingImageUrls.push(e), err => err)));
+        console.log(missingImageUrls);
+
+        await postImages(podcastUuid, missingImageUrls, trim);
+        res.json({
+            status: 200,
+        });
+    } catch (error) {
+        console.error(error);
+        res.statusCode = 400;
+        res.json({
+            status: 400,
+            message: error.message
+        });
+    }
+});
+
+async function oc() {
+
+}
 
 async function getUrlIfDoesNotExist(size: number, imageUrl: string, podcastUuid: string, trim: boolean = false): Promise<string> {
     const imageUrlUuid = uuidv5(trim ? imageUrl.split('?')[0] : imageUrl, uuidNIL);
@@ -159,8 +196,8 @@ async function getFilePromise(folder: string, fileName: string, file: Buffer): P
         const uploadedUrls: string[] = [];
         await Promise.all(promises.map(a => a.then(r => {
             uploadedUrls.push(r);
-            return console.log('Image is successfully uploaded to aws! 🔥');
-        }).catch(e => console.error('Couldn\'t upload ' + e))));
+            return console.log('Image is successfully uploaded to aws! 🔥 https://podcasterapp-covers.s3.eu-central-1.amazonaws.com/' + r);
+        }).catch(e => { throw new Error('CAUGHT! e') })));
         return uploadedUrls;
     } catch (error) {
         throw error;
@@ -188,7 +225,6 @@ async function getCompressedImageCouple(imageBuffer: Buffer): Promise<{ _300: Bu
 }
 
 async function getSingleFileUploadPromise(params: AWS.S3.PutObjectRequest): Promise<string> {
-    console.log('UPLAODED https://podcasterapp-covers.s3.eu-central-1.amazonaws.com/' + params.Key);
     const promise = await s3bucket.upload(params).promise();
 
     return promise.Key;
