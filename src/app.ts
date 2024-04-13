@@ -9,9 +9,10 @@ import AWS from "aws-sdk";
 import { get } from "https";
 import fetch from "node-fetch";
 import multer from 'multer';
+import fs from 'fs';
 
 const app = express();
-const port = 3002;
+const port = process.env.PORT || 3000;
 
 
 const s3bucket = new AWS.S3({
@@ -25,6 +26,16 @@ const COVERS_BUCKET = process.env.S3_BUCKET;
 const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 4 * 1024 * 1024, files: 1 } });
 
+// mkdir ~/podino-media/podcast-covers if not exists
+// process.env.HOME || process.env.HOMEPATH || process.env.USERPROFILE
+const coverSizes = [600, 300, 120];
+const mediaFolder = `${process.env.HOME || process.env.HOMEPATH || process.env.USERPROFILE}/podino-media/podcast-covers`;
+fs.mkdirSync(mediaFolder, { recursive: true });
+for (let a = 0; a < coverSizes.length; a++) {
+    fs.mkdirSync(`${mediaFolder}/${coverSizes[a]}`, { recursive: true });
+}
+
+
 app.use(express.static("./uploads"));
 app.use(express.urlencoded({ extended: false }))
 app.use(express.json());
@@ -34,10 +45,6 @@ app.use(compression());
 app.use(helmet());
 // providing a Connect/Express middleware that can be used to enable CORS with various options
 app.use(cors());
-
-app.get('/', (req, res) => {
-    res.send('Hello World!');
-});
 
 app.listen(port, () => {
     return console.log(`Express is listening at http://localhost:${port}`);
@@ -57,6 +64,48 @@ app.post("/up", upload.single('file'), async (req: Request, res: Response) => {
             status: 200,
             data
         });
+    } catch (error) {
+        console.error(error);
+        res.statusCode = 400;
+        res.json({
+            status: 400,
+            message: error.message
+        });
+    }
+});
+
+app.get("/", async (req: Request, res: Response) => {
+    try {
+        const size = req.query['size'] || '300';
+        const url = req.query['imageUrl'];
+        if (url == null) {
+            res.redirect(301, 'https://podino.app/');
+            return;
+        } 
+        
+        const imageUrlUuid = uuidv5(url.toString(), uuidNIL);
+        // if exists directly return the image
+        const requestedImageAlreadyExists = fs.existsSync(`${mediaFolder}/${size}/${imageUrlUuid}.webp`);
+        if (requestedImageAlreadyExists){
+            res.sendFile(`${mediaFolder}/${size}/${imageUrlUuid}.webp`);
+            return;
+        }
+
+        /**
+         * DON'T USE AWS
+         * check if image is already in ~/podino-media/podcast-covers/
+         * show if exists. Else compress and put it there
+         * then show it to user
+         */
+        let start = new Date().getTime();
+        const downloadedImage = await fetch(url);
+
+        console.log('Time taken to download: ', new Date().getTime() - start, 'ms');
+        start = new Date().getTime();
+        
+        await saveCompressedImages(imageUrlUuid, Buffer.from(await downloadedImage.arrayBuffer()));
+        console.log('Time taken: ', new Date().getTime() - start, 'ms');
+        res.sendFile(`${mediaFolder}/${size}/${imageUrlUuid}.webp`);
     } catch (error) {
         console.error(error);
         res.statusCode = 400;
@@ -222,6 +271,29 @@ async function getCompressedImageCouple(imageBuffer: Buffer): Promise<{ _300: Bu
     const resized300 = await sharp(imageBuffer).resize(300, 300)
         .toBuffer();
     return { _300: resized300, _600: resized600 };
+}
+
+
+
+async function saveCompressedImages(name: String, imageBuffer: Buffer): Promise<void> {
+    /**
+     * DON'T USE AWS
+     * 
+     * 
+     */
+    const compressSizes = [600, 300, 120];
+    let lastCompression = imageBuffer;
+    //save them to ~/podino-media/podcast-covers/ as {uuidv5}-{size}.webp
+    for (let a = 0; a < compressSizes.length; a++) {
+        const folderExists = fs.existsSync(`${mediaFolder}/${compressSizes[a]}`);
+        if (!folderExists) {
+            throw new Error('Folder doesn\'t exist');
+        }
+        const filePath = `${mediaFolder}/${compressSizes[a]}/${name}.webp`;
+        const resized = await sharp(lastCompression).webp({quality:70}).resize(compressSizes[a], compressSizes[a]).toBuffer();
+        lastCompression = resized;
+        fs.writeFileSync(filePath, resized);
+    }
 }
 
 async function getSingleFileUploadPromise(params: AWS.S3.PutObjectRequest): Promise<string> {
