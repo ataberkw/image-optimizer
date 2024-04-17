@@ -1,6 +1,7 @@
 import express, { Request, Response, json } from 'express';
 import sharp from "sharp";
 import "dotenv/config"
+import path from 'path';
 import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -116,9 +117,29 @@ app.get("/", async (req: Request, res: Response) => {
     }
 });
 
+app.get("/media/*", async (req: Request, res: Response) => {
+    // Dosya yolunu req.params[0] ile alıyoruz
+    const filePath = req.params[0];
+
+    // Güvenlik için path.normalize kullanarak dosya yolunu normalize ediyoruz
+    const safePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
+
+    // Dosya tam yolu, sunucunuzdaki yerel dizin yapısına göre ayarlanmalı
+    const fullPath = path.join(`${process.env.HOME || process.env.HOMEPATH || process.env.USERPROFILE}/podino-media`, safePath);
+console.log("fullpath: ", fullPath);
+
+    // Dosyayı gönderiyoruz
+    res.sendFile(fullPath, (err) => {
+        if (err) {
+            // Dosya bulunamadı veya başka bir hata oluştu
+            console.log(err);
+            res.status(404).send("Dosya bulunamadı!");
+        }
+    });
+});
+
 app.post("/oc", async (req: Request, res: Response) => {
     try {
-
         const podcastName = req.body['podcastRSS'] as string;
         const podcastUuid = uuidv5(podcastName, uuidNIL);
         const trim = req.body['trim'] == true;
